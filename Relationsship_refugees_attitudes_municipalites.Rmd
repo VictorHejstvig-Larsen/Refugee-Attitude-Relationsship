@@ -1,0 +1,895 @@
+---
+title: "Relationsship between immigrant attitude and arrival of refugees in danish municipalites"
+author: "Victor Hejstvig-Larsen, Dante Bussolo, Gustav Dyppel"
+date: '2022-08-04'
+output:
+  html_document:
+    df_print: paged
+  word_document: default
+  pdf_document: default
+subtitle: 
+always_allow_html: yes
+header-includes: \usepackage{dcolumn}
+keep_tex: yes
+font-size: 12.67pt
+linestretch: 1.5
+geometry: left=2.5cm,right=2.5cm,top=3cm,bottom=3cm
+latex_engine: xelatex
+---
+\pagebreak
+
+
+Description of the project: 
+We want to investigate the relationship between the arrival of refugees in Danish municipalities and Danish citizens' attitudes towards refugees and immigration. We use the Danish Election Survey (Valgundersøgelsen) and scrape data from the Danish Immigration Services' website (Udlændingestyrelsen) to assess whether and how the number of refugee per municipality  correlates with citizens' attitudes. Our analysis captures citizens' attitudes from 2007, 2011, 2015, and 2019.
+
+We then create an index that captures citizens' attitudes towards immigration based on survey questions and do a factor analysis to know which variables to retain in our indices. Finally, we perform various descriptive statistics, visualizations, and model estimations that measure the relationship between our variables of interest. 
+
+The point of the project is to explore possibilities in R and not to identify causal relationships or answer a research question.
+
+## 1. Loading the required packages, reading and tyding the data of the Danish Election Survey.
+
+```{r, warning=FALSE}
+pack<-c("car","sandwich","lmtest","RColorBrewer","mgcv","foreign","xtable"
+        ,"AER","stargazer", "MASS", "stringr", "rio", "naniar", "tidyverse", 
+        "rvest", "plotly", "rgdal", "classInt", "maps", "raster", "foreign", "PanJen",
+        "shape", "ggmap", "gganimate")
+lapply(pack, require, character.only=T)
+
+setwd("C:/Users/45533/OneDrive - Aarhus universitet/Statskundskab/R/Making sense of data/Final Exam/Test data")
+
+valg07<-import("data2007.Rdata")
+valg11<-import("data2011.Rdata")
+valg15<-import("data2015.Rdata")
+valg19<-import("data2019.Rdata")
+
+#Municipality codes for the 4 datasets
+str(valg19$c_kom)##with 0 first
+str(valg15$V365) ##without 0
+str(valg11$V363) ##without 0 first
+str(valg07$V510) ##without 0 first
+
+
+
+###########################################################################
+#Picking all the variables for each election survey that measures attitudes 
+#towards immigration and municipality code variable.
+##########################################################################
+
+es07<- valg07[, (names(valg07) %in% c('V154','V157', 'V224', 'V231',
+                                      'V256', 'V262','V263',
+                                      'V309', 'V510')
+)]
+
+es11 <- valg11[, (names(valg11) %in% c("V154", "V149", "V186", "V191",
+                                       "V208", "V256", "V363")
+)]
+
+es15 <- valg15[ , (names(valg15) %in% c("V186", "V202", "V141", "V149",
+                                        "V259", "V180", "V181", "V368")
+)]
+
+es19<- valg19[,(names(valg19) %in% c('q54_10_resp', "q60_9_resp", "q43_5_resp",
+                                     "q54_5_resp", "q54_10_resp", "q54_11_resp",
+                                     "q60_10_resp", "q70_14_resp", "c_kom")
+)]
+
+
+
+###########################################################################
+#Removing NA, don't knows and non-answers.
+###########################################################################
+
+missval<-c(6:100)
+
+for (i in missval){
+  es07[es07 ==i] <- NA
+}
+
+for (i in missval){
+  es11[es11 ==i] <- NA
+}
+
+for (i in missval){
+  es15[es15 ==i] <- NA
+}
+
+for (i in missval){
+  es19[es19 ==i] <- NA
+}
+
+```
+
+We made sure that each variable was scaled correctly (i.e., 5 is high opposition to 
+immigration and 1 represents a highly favorable attitudes towards it). We have used the election survey's code book to see that. We realized that not all survey questions measured citizens' attitudes in the same direction. We take the column number of those variables we want to reverse to make them have the same direction as the other variables. We then create a loop for each data frame.
+
+```{r}
+#Election Survey 2007####
+colnum07 <- (c(1,3,5,8))
+
+for(i in colnum07) {
+  es07[,i] <- ifelse(es07[,i]==5, 1,
+                     ifelse(es07[,i]==4, 2,
+                            ifelse(es07[,i]==2, 4,
+                                   ifelse(es07[,i]==1, 5,
+                                          ifelse(es07[,i]==3, 3, NA))
+                            )))
+}
+
+#Election Survey 2011####
+colnum11 <- c(3,5,6)
+
+for(i in colnum11) {
+  es11[,i] <- ifelse(es11[,i]==5, 1,
+                     ifelse(es11[,i]==4, 2,
+                            ifelse(es11[,i]==2, 4,
+                                   ifelse(es11[,i]==1, 5,
+                                          ifelse(es11[,i]==3, 3, NA))
+                            )))
+}
+
+#Election Survey 2015####
+colnum15 <- c(6, 7, 3, 4)
+
+for(i in colnum15) {
+  es15[,i] <- ifelse(es15[,i]==5, 1,
+                     ifelse(es15[,i]==4, 2,
+                            ifelse(es15[,i]==2, 4,
+                                   ifelse(es15[,i]==1, 5,
+                                          ifelse(es15[,i]==3, 3, NA))
+                            )))
+}
+
+#Election Survey 2019
+colnum19 <- c(2, 4, 6, 7)
+
+for(i in colnum19) {
+  es19[,i] <- ifelse(es19[,i]==5, 1,
+                     ifelse(es19[,i]==4, 2,
+                            ifelse(es19[,i]==2, 4,
+                                   ifelse(es19[,i]==1, 5,
+                                          ifelse(es19[,i]==3, 3, NA))
+                            )))
+}
+```
+
+## 1.2 Factor analysis
+
+We proceed to doing a factor analysis of the survey questions we think measured citizens' immigration attitudes. The factor analysis helps us to determine which questions to include in our attitudes-index. The attitudes-index will be our dependent variable that will be plotted against the number of refugees per municipality.
+
+```{r}
+factor07 <- es07[,1:8]
+
+factanal (na.omit(factor07), factor07, factors=3)
+```
+
+In the output, we can see that the variables V262 and V256 have a loading below the 0.3 threshold. We thus want to try a factor analysis without these variables.
+
+```{r}
+factor07 <- es07[,c(1,3,4,7,8)]
+factanal (na.omit(factor07), factor07, factors=2)
+```
+
+Now we remove the variables that we don't need, since they didn't load on the same factor (column 8 and 9 are municipality code and year that we need to add). In this section, we also create the index measuring citizens' attitudes towards refugees and immigration. Furthermore, we add a variable indicating the year in which the election survey was conducted.
+
+```{r}
+es07 <- es07[,c(1,3,4,7,8,9)]
+
+
+
+###########################################################################
+#Now we're ready to create a reflective index that measures opinion towards 
+#immigrants. 
+###########################################################################
+
+es07$index <- (es07$V154 + es07$V224 + 
+                 es07$V231 + es07$V263 + es07$V309) / 5
+
+#Only keep the index and municipality
+es07 <- es07[,c(6:7)]
+
+
+
+###########################################################################
+#Now we restructure the data to get the mean of the index for each municipality.
+#Finales07 then has the municipalities as each observation and one score on 
+#the index. Now we can rank the municipalities by the most negative attitudes
+#towards immigration.
+###########################################################################
+
+finales07<- data.frame(es07 %>% 
+                         na.omit() %>% 
+                         group_by(V510) %>% 
+                         summarise_at(vars(index), list(attitude=mean)))
+
+
+
+###########################################################################
+#We now repeat this for the 3 other data frames
+###########################################################################
+
+
+#Election Survey 2011####
+
+factor11 <- es11[,1:6]
+
+factanal (na.omit(factor11), factor11, factors=2)
+
+factor11 <- es11[,c(3:6)]
+factanal (na.omit(factor11), factor11, factors=1)
+
+es11 <- es11[,c(3:7)]
+
+es11$index <- (es11$V186 + es11$V191 + 
+                 es11$V208 + es11$V256) / 4
+
+es11 <- es11[,c(5:6)]
+
+finales11<- data.frame(es11 %>% 
+                         na.omit() %>% 
+                         group_by(V363) %>% 
+                         summarise_at(vars(index), list(attitude=mean)))
+
+
+
+#Election Survey 2015####
+
+###########################################################################
+#We had a weird issue because respondents could only answer one or the other 
+#of V180 and V181 in 2015. This meant that na.omit() left no observations 
+#and the code didn't work. This simple code merged them together which is 
+#desirable since the questions are extremely similar.
+###########################################################################
+
+es15$V180 <- coalesce(es15$V180, es15$V181)
+
+es15$V181 = NULL
+
+factor15 <- es15[,1:6]
+
+es15[,1:6]<-lapply(es15[,1:6], FUN=function(y){as.numeric(y)}) 
+
+factanal(na.omit(factor15), factor15, factors=2)
+
+es15<- es15[,2:7]
+
+es15$index <- (es15[,1]+es15[,2]+es15[,3]+es15[,4]+
+                 es15[,5]) / 5
+
+finales15 <- data.frame(es15 %>% 
+                          na.omit() %>% 
+                          group_by(V368) %>% 
+                          summarise_at(vars(index), list(attitude=mean)))
+
+
+
+#Election Survey 2019####
+
+factor19 <- es19[,1:7]
+
+factanal (na.omit(factor19), factor19, factors=3)
+
+es19$index <- (es19[,1]+es19[,2]+es19[,3]+es19[,4]+
+                 es19[,5]+es19[,6]+es19[,7]) / 7
+
+es19 <- es19[,c(8:9)]
+
+finales19<- data.frame(es19 %>% 
+                         na.omit() %>% 
+                         group_by(c_kom) %>% 
+                         summarise_at(vars(index), list(attitude=mean)))
+
+
+
+###########################################################################
+#Add year variable to each data frame
+###########################################################################
+
+finales07$year <- 2007
+finales11$year <- 2011  
+finales15$year <- 2015
+finales19$year <- 2019
+
+
+
+###########################################################################
+#Removing things from the environment to make it tidy
+###########################################################################
+rm(list=ls()[! ls() %in% (c("finales07", "finales11", "finales15", "finales19"))])
+```
+
+## 1.3 Webscraping the number of refugees
+
+After having tidied and formatted the data from the Danish Election Surveys, we proceed to web scrape data from the Udlændingestyrelsens website to obtain the number of alocated refugees per municipality in 2007, 2011, 2015, and 2019.
+
+We proceeded as follows: 
+```{r, warning=FALSE}
+url <- 'https://us.dk/tal-og-statistik/visiteringskvoter/'
+
+#Reading the HTML code from the website. When one downloads it, it is in html-format (which one cannot use) - so we used the rvest package
+webpage <- read_html(url)
+
+#Scraping municipality name
+municipality_html <- html_nodes(webpage,'#ContentPlaceHolderDefault_mainGrid_ctl20_panel tr+ tr td:nth-child(1) .black')
+municipality <- html_text(municipality_html)
+
+
+
+###########################################################################
+#We now scrape the refugee allocation for each year of interest (2007, 2011,
+#2015, and 2019).
+###########################################################################
+
+
+
+#Election Survey 2007####
+
+#Scraping allocation
+data_2007_html <- html_nodes(webpage,'#ContentPlaceHolderDefault_mainGrid_ctl44_panel tr+ tr td+ td .black')
+data_2007 <-  html_text(data_2007_html)
+data_2007 <- as.numeric(data_2007)
+
+#Creating data frame (Denmark total is in the 2007-data for some reason, hence its removal)
+data_2007 <- data_2007[data_2007!=1000]
+df_2007 <- data.frame(municipality, data_2007)
+
+#Removing regions (for some reason, the selector gadget completely messed up 
+#if we tried to remove them as html_objects)
+df_2007 <- df_2007[!grepl("Region", df_2007$municipality),]
+
+#Splitting municipality code and municipality name
+df_2007[c('mcode', 'municipality')] <- str_split_fixed(df_2007$municipality, ' ', 2)
+
+#Changing mcoode to numeric
+str(df_2007)
+df_2007$mcode <- as.numeric(df_2007$mcode)
+
+
+#Doing the same for the other years
+#2011####
+
+data_2011_html <- html_nodes(webpage,'#ContentPlaceHolderDefault_mainGrid_ctl36_panel tr+ tr td+ td')
+data_2011 <-  html_text(data_2011_html)
+data_2011 <- as.numeric(data_2011)
+
+df_2011 <- data.frame(municipality, data_2011)
+
+df_2011 <- df_2011[!grepl("Region", df_2011$municipality),]
+
+df_2011[c('mcode', 'municipality')] <- str_split_fixed(df_2011$municipality, ' ', 2)
+
+str(df_2011)
+df_2011$mcode <- as.numeric(df_2011$mcode)
+
+
+
+#2015####
+
+data_2015_html <- html_nodes(webpage,'#ContentPlaceHolderDefault_mainGrid_ctl28_panel tr+ tr td+ td')
+data_2015 <-  html_text(data_2015_html)
+data_2015 <- as.numeric(data_2015)
+
+df_2015 <- data.frame(municipality, data_2015)
+
+df_2015 <- df_2015[!grepl("Region", df_2015$municipality),]
+
+df_2015[c('mcode', 'municipality')] <- str_split_fixed(df_2015$municipality, ' ', 2)
+
+str(df_2015)
+df_2015$mcode <- as.numeric(df_2015$mcode)
+
+
+
+#2019####
+
+data_2019_html <- html_nodes(webpage,'#ContentPlaceHolderDefault_mainGrid_ctl20_panel tr+ tr td+ td .black')
+data_2019 <-  html_text(data_2019_html)
+data_2019 <- as.numeric(data_2019)
+
+df_2019 <- data.frame(municipality, data_2019)
+
+df_2019 <- df_2019[!grepl("Region", df_2019$municipality),]
+
+df_2019[c('mcode', 'municipality')] <- str_split_fixed(df_2019$municipality, ' ', 2)
+
+str(df_2019)
+df_2019$mcode <- as.numeric(df_2019$mcode)
+```
+
+## 1.4 Final data set
+
+We now merge and reshape everything to have one final data set containing all four years of the Danish election surveys, the constructed index, and the number of refugees per municipalities. Eventually, we get our final data set.
+
+```{r}
+#Changing pattern for the finales19, since it had a 0 at the start of municipality code
+finales19$c_kom <- str_remove(finales19$c_kom, "^0+")
+
+df07<-merge(df_2007, finales07, by.x=c("mcode"), by.y=("V510"), all=T)
+df11<-merge(df_2011, finales11, by.x=c("mcode"), by.y=("V363"), all=T)
+df15<-merge(df_2015, finales15, by.x=c("mcode"), by.y=("V368"), all=T)
+df19<-merge(df_2019, finales19, by.x=c("mcode"), by.y=("c_kom"), all=T)
+
+dataset <- bind_rows(df07, df11, df15, df19)
+
+dataset$refugee <- coalesce(dataset$data_2007, dataset$data_2011, dataset$data_2015, dataset$data_2019)
+
+dataset <-  subset(dataset, select = c(1,2, 4, 5, 9) )
+
+#Finally we have our data set!! :)
+
+#Tidying the R environment
+rm(list=ls()[! ls() %in% (c("dataset"))])
+```
+\pagebreak
+
+
+## 2. Descriptive statistics.
+
+Now that we have our data set, we proceed to do some descriptive statistics. 
+We start with a very basic description of our main variables (citizens attitudes towards immigration and the number of refugees per municipality):
+
+```{r}
+datadescribe <- na.omit(subset(dataset, select = c(3,5)))
+statsrefat<-matrix(NA, nrow=2, ncol=6)
+colnames(statsrefat)<-c("Min", "1st Quantile","Median", "Mean", "3rd Quantil","Max")
+rownames(statsrefat)<-names(datadescribe)
+
+#We provide the functions to calculate the summary statistics in the empty
+#matrix and view the outcome:
+#In the stargazer function, we use type=text, but out= .html
+
+for(i in c(1,2)){
+  options(scipen = n, digits=2)
+  statsrefat[i,1]<-min(datadescribe[,i])
+  statsrefat[i,2]<-quantile(datadescribe[,i], probs = 0.25)
+  statsrefat[i,3]<-quantile(datadescribe[,i], probs = 0.5)
+  statsrefat[i,4]<-mean(datadescribe[,i])
+  statsrefat[i,5]<-quantile(datadescribe[,i], probs = 0.75)
+  statsrefat[i,6]<-max(datadescribe[,i])
+}
+
+stargazer(statsrefat, type = "text",
+          title="Descriptive statistics", 
+          digits=1,
+          out="star_model.html")
+
+```
+
+Plotting the amount of refugee arrivals in Denmark in 2007, 2011, 2015, and 2019.
+```{r}
+dataset<-na.omit(dataset)
+totalrefugeesyearly<- aggregate (dataset["refugee"], by=dataset["year"], sum)
+
+totalrefugeesyearly %>% 
+  ggplot(aes(year, refugee, fill=as.factor(year)))+
+  geom_bar(stat="identity", alpha=1) +
+  geom_text(aes(label=refugee), vjust=1.4, color="seashell2", size=3.5)+
+  xlab("Year")+
+  ylab("Number of Refugees")+
+  theme_bw()+
+  scale_fill_manual(values=c("#4292C6","#2171B5","#08306B","#6BAED6"))+
+  theme(legend.position = 'none')
+```
+
+Plotting the density distribution of attitudes towards immigration in the Danish municipalities in each year the election survey took place.
+
+```{r}
+dataset %>% 
+  ggplot(aes(attitude)) +
+  geom_density(color="royalblue", fill="royalblue", alpha=0.6)+ 
+  xlab("Average Citizen Attitude Per Municipality")+
+  ylab("Density")+
+  theme_bw()+
+  facet_wrap(~year)
+```
+
+
+## 3. Regression Models
+
+First, we check the best fitting functional form with the PanJen package:
+```{r}
+fylist= list(
+  linear = function(x) x,
+  sqr = function(x) x^2,
+  log=function(x) log(x),
+  inverse= function(x) 1/x,
+  polynomial= function(x) x^3
+)
+ols_form<-formula(attitude~year
+                  , data=data.set)
+dataset <- na.omit(dataset)
+PanJenAreaC1<-choose.fform(data=dataset,variable="refugee",base_form=ols_form, functionList=fylist)
+plotff(PanJenAreaC1)
+```
+
+Second, we proceed to estimate a linear regression model without and with municipality fixed effects:
+```{r, warning=FALSE}
+#Making LM without municipality fixed effects
+lmodel <- lm(attitude ~ refugee, data=dataset)
+
+#Making LM with municipality fixed effects
+lmodelfe <- lm(attitude ~ refugee + as.factor(municipality), data=dataset)
+
+#Creating a table
+stargazer(lmodel, lmodelfe, title='Estimated effect of the influx of refugees on attitudes in municipalities',
+          type='text', omit=("municipality"), out="lmodels.html")
+```
+
+
+## 4. Plots of the relationship
+
+We start by plotting the relationship of citizens' attitudes towards immigration and the number of refugees their municipality has taken in a given year (each point represents a municipality in a given year). The OLS lines help to understand the relationship between both variables for each selected year.
+```{r}
+#Plot with OLS-regression lines for each year
+dataset %>% 
+  filter(refugee<300) %>% 
+  ggplot(aes(refugee, attitude, color=as.factor(year))) +
+  geom_point(pch=20, size=2, alpha=0.5) +
+  geom_smooth(method=lm, se=F, size=0.8)+
+  theme_bw()+
+  scale_color_manual(values=c("khaki3", "lightcoral", "royalblue",
+                              "plum4"))+
+  labs(title="Relationship between number of refugees and citizens attitudes in danish municipalities, 
+       5=high opposition, 1=high favorability",
+       x="Number of refugees in municipality", y="Attitudes towards refugees") +
+  scale_x_continuous(breaks=round(seq(min(0), max(300), by=50)))+
+  scale_y_continuous(breaks=c(1, 2, 3, 4, 5))
+
+
+```
+
+Next we make an interactive plot of the correlation between citizens' attitudes towards immigration and the number of refugees taken by municipalities. The interactive map permits to see what each data point represents and gives information about the year, the municipality, the number of refugees that arrived in that municipality in a given year, and its citizens' attitudes towards immigration in that year.
+```{r}
+str(dataset$year)
+dataset$year <- as.factor(dataset$year)
+
+#Interactive version of the plot
+scatterplott<- dataset %>% 
+  filter(refugee<300) %>% 
+  ggplot(aes(refugee, attitude, color=year, fill=municipality)) +
+  geom_point(pch=20, size=2, alpha=0.5) +
+  geom_smooth(method=lm, se=F, size=0.8)+
+  theme_bw()+
+  scale_color_manual(values=c("khaki3", "lightcoral", "royalblue",
+                              "plum4"))+
+  labs(title="Relationship between number of refugees and citizens attitudes in danish municipalities, 
+       5=high opposition, 1=high favorability",
+       x="Number of refugees in municipality", y="Attitudes towards refugees") +
+  scale_x_continuous(breaks=round(seq(min(0), max(300), by=50)))+
+  scale_y_continuous(breaks=c(1, 2, 3, 4, 5))+
+  theme(legend.position='none')
+
+ggplotly(scatterplott, tooltip=c("x", "y", "year", "municipality"))
+```
+
+The relationship plotted in a layered plot
+
+```{r}
+dataset %>% 
+  ggplot(aes(refugee, attitude, color=year))+
+  geom_point(alpha=1, pch=20, size=3)+
+  transition_states(as.integer(year), wrap=T)+
+  enter_fade()+
+  theme_minimal()+
+  exit_fade()+
+  labs(title="Relationship between number of refugees and citizens attitudes in danish municipalities, 
+       5=high opposition, 1=high favorability",
+       x="Number of refugees in municipality", y="Attitudes towards refugees") +
+  scale_x_continuous(breaks=round(seq(min(0), max(300), by=50)))+
+  scale_y_continuous(breaks=c(1, 2, 3, 4, 5))
+```
+
+## 5. Doing GIS
+```{r}
+#Tidying the environment
+rm(list=ls()[! ls() %in% (c("dataset"))])
+
+#Starting with GIS
+gis_muni <- readOGR(dsn="C:/Users/45533/OneDrive - Aarhus universitet/Statskundskab/R/Making sense of data/Final Exam/Test data/shp",
+                    layer="KOMMUNE")
+class(gis_muni)
+
+#Cheking the projection - it is the correct one (yay)
+proj4string(gis_muni)
+
+plot(gis_muni, col=colors()[c(18)])
+
+```
+
+At first when we tried to merge our data set with the GIS municipality spatial data set, we discovered that several municipalities were missing on the map. We figured out that the merge removed some observations as the municipality names in the respective data sets were incongruent. For instance: 
+1) One data set spells Aarhus while the other spells Århus.
+2) One data set spells Ringkøbing-Skjern while the other spells Rinkjøbing-Skerne.
+3) One data set spells Høje Taastrup while the other spells Høje-Taastrup.
+In order to ensure that no Danish letters we blurring the merging process, we made all special letters in to an international version. Furthermore, we went in to special cases and recoded their names.
+
+```{r}
+unique(dataset$municipality)
+unique(gis_muni$KOMNAVN)
+
+dataset$municipality[dataset$municipality == "Ringkjøbing-Skjern"] <- "Ringkøbing-Skjern"
+dataset$municipality[dataset$municipality == "Vesthimmerland"] <- "Vesthimmerlands"
+dataset$municipality[dataset$municipality == "Høje-Taastrup"] <- "Høje Taastrup"
+
+dataset$municipality<-gsub("Å", "Aa", dataset$municipality)
+dataset$municipality<-gsub("å", "aa", dataset$municipality)
+dataset$municipality<-gsub("Ø", "Oe", dataset$municipality)
+dataset$municipality<-gsub("ø", "oe", dataset$municipality)
+dataset$municipality<-gsub("Æ", "Ae", dataset$municipality)
+dataset$municipality<-gsub("æ", "ae", dataset$municipality)
+
+gis_muni$KOMNAVN <- gsub("Å", "Aa", gis_muni$KOMNAVN)
+gis_muni$KOMNAVN <- gsub("å", "aa", gis_muni$KOMNAVN)
+gis_muni$KOMNAVN <- gsub("Ø", "Oe", gis_muni$KOMNAVN)
+gis_muni$KOMNAVN <- gsub("ø", "oe", gis_muni$KOMNAVN)
+gis_muni$KOMNAVN <- gsub("Æ", "Ae", gis_muni$KOMNAVN)
+gis_muni$KOMNAVN <- gsub("æ", "ae", gis_muni$KOMNAVN)
+
+#Separating datasets
+dataset07 <- subset(dataset, dataset$year==2007)
+dataset11 <- subset(dataset, dataset$year==2011)
+dataset15 <- subset(dataset, dataset$year==2015)
+dataset19 <- subset(dataset, dataset$year==2019)
+
+#Checking color codes for nice data visualization palettes and creating our own. 
+#Here, we use the RcolorBrewer-package
+display.brewer.pal(5, "Blues")
+brewer.pal(5, "Blues")
+palette <- c("#EFF3FF", "#BDD7E7", "#6BAED6", "#3182BD", "#08519C")
+
+```
+
+Creating maps for each year. We intend to make 8 maps in total - 2 maps for each recorded year in the data set, highlighting the average attitude and the amount of refugees respectively. 
+
+```{r}
+
+#2007####
+
+#We are making sure that the names to merge on is in character, as it otherwise might 
+#disturb the merging process. 
+dataset07 <- as.matrix(dataset07)
+dataset07<-data.frame(dataset07)
+
+gis_muni$KOMNAVN<-as.character(gis_muni$KOMNAVN)
+
+dataset07$Name<-as.character(dataset07$municipality)
+
+#Merging data for 2007
+gis_muni<-merge(gis_muni, dataset07, 
+                by.x=c("KOMNAVN"), 
+                by.y=("Name"), all=FALSE)
+
+#Changing the variables of interest 
+gis_muni$attitude<-as.numeric(as.character(gis_muni$attitude))
+gis_muni$refugee<-as.numeric(as.character(gis_muni$refugee))
+
+#Plotting base plot for attitudes
+plot(gis_muni)
+
+#Dividing attitudes into intervals 
+q5 <- classIntervals(gis_muni$attitude, n=5, style="pretty", dataPrecision =1)
+
+#Choosing colors according to intervals  
+q5Colours <- findColours(q5, palette)
+
+#Plotting municipalities 
+plot(gis_muni, axes=TRUE, col=q5Colours, add=TRUE)
+
+#Checking coordinates for the placement of the legend
+locator(n=512)
+#$x [1] 777912.1
+#$y [1] 6390976
+
+#Adding title
+title(main="2007",
+      cex.main=2.5)
+
+#Adding legend 
+#We tried so many things to get the legend text bigger while maintaining the size 
+#of the legend points (we're close to be one days work up on it), but failed miserably.
+#As to our best knowledge, it seems to be quite tricky as no function specifically intended 
+#to do this is specified in the r-documentation page below.
+#https://www.rdocumentation.org/packages/graphics/versions/3.6.2/topics/legend
+legend(x= 777912, y=6390976, 
+       fill = attr(q5Colours, "palette"),
+       cex=1,
+       text.font=2,
+       border="black",
+       legend=c("<2.0", "2.1-2.6", "2.7-3.2", "3.3-3.8", ">3.8"),
+       gsub(",", " - ", names(attr(q5Colours, "table"))), 
+       bg ="white",
+       bty = "n",
+       title="Attitude") 
+
+#Plotting base plot refugees
+plot(gis_muni)
+
+#Dividing refugees into intervals 
+q5 <- classIntervals(gis_muni$refugee, n=5, style="pretty", dataPrecision =1)
+
+#Choosing colors acording to intervals  
+q5Colours <- findColours(q5, palette)
+
+#Plotting municipalities 
+plot(gis_muni, axes=TRUE, col=q5Colours, add=TRUE)
+
+#Adding title
+title(main="2007",
+      cex.main=2.5)
+
+#Adding legend 
+legend(x= 777912, y=6390976, 
+       fill = attr(q5Colours, "palette"),
+       cex=1,
+       text.font=2,
+       border="black",
+       legend=c("0", "1-15", "16-30", "31-45", ">45"),
+       gsub(",", " - ", names(attr(q5Colours, "table"))), 
+       bg ="white",
+       bty = "n",
+       title="Refugees") 
+```
+
+Now that we have plotted the year 2007, we also make a map for the other years.
+```{r}
+#Removing variables from the GIS so the data from 2007 does not interfere. 
+gis_muni$mcode <- NULL
+gis_muni$attitude <-  NULL
+gis_muni$year <- NULL
+gis_muni$refugee <- NULL
+
+dataset11 <- as.matrix(dataset11)
+dataset11<-data.frame(dataset11)
+gis_muni$KOMNAVN<-as.character(gis_muni$KOMNAVN)
+dataset11$municipality<-as.character(dataset11$municipality)
+gis_muni<-merge(gis_muni, dataset11, 
+                by.x=c("KOMNAVN"), 
+                by.y=("municipality"), all=FALSE)
+gis_muni$attitude<-as.numeric(as.character(gis_muni$attitude))
+gis_muni$refugee<-as.numeric(as.character(gis_muni$refugee))
+
+plot(gis_muni)
+q5 <- classIntervals(gis_muni$attitude, n=5, style="pretty", dataPrecision =1)
+q5Colours <- findColours(q5, palette)
+plot(gis_muni, axes=TRUE, col=q5Colours, add=TRUE)
+
+title(main="2011",
+      cex.main=2.5)
+legend(x= 777912, y=6390976, 
+       fill = attr(q5Colours, "palette"),
+       cex=1,
+       text.font=2,
+       border="black",
+       legend=c("<2.0", "2.1-2.6", "2.7-3.2", "3.3-3.8", ">3.8"),
+       gsub(",", " - ", names(attr(q5Colours, "table"))), 
+       bg ="white",
+       bty = "n",
+       title="Attitude") 
+
+###Refugees
+plot(gis_muni)
+q5e <- classIntervals(gis_muni$refugee, n=5, style="quantile", dataPrecision =1)
+q5eColours <- findColours(q5e, palette)
+plot(gis_muni, axes=TRUE, col=q5eColours, add=TRUE)
+
+title(main="2011",
+      cex.main=2.5)
+legend(x= 777912, y=6390976, 
+       fill = attr(q5Colours, "palette"),
+       cex=1,
+       text.font=2,
+       border="black",
+       legend=c("0-17", "17-33", "33-42", "42-45", "45-76"),
+       gsub(",", " - ", names(attr(q5Colours, "table"))), 
+       bg ="white",
+       bty = "n",
+       title="Refugees") 
+```
+
+```{r}
+#Removing variables from the GIS so the data from 2011 does not interfere.
+gis_muni$mcode <- NULL
+gis_muni$attitude <-  NULL
+gis_muni$year <- NULL
+gis_muni$refugee <- NULL
+
+dataset15 <- as.matrix(dataset15)
+dataset15<-data.frame(dataset15)
+gis_muni$KOMNAVN<-as.character(gis_muni$KOMNAVN)
+dataset15$municipality<-as.character(dataset15$municipality)
+gis_muni<-merge(gis_muni, dataset15, 
+                by.x=c("KOMNAVN"), 
+                by.y=("municipality"), all=FALSE)
+gis_muni$attitude<-as.numeric(as.character(gis_muni$attitude))
+gis_muni$refugee<-as.numeric(as.character(gis_muni$refugee))
+
+plot(gis_muni)
+q5 <- classIntervals(gis_muni$attitude, n=5, style="quantile", dataPrecision =1)
+q5Colours <- findColours(q5, palette)
+plot(gis_muni, axes=TRUE, col=q5Colours, add=TRUE)
+
+title(main="2015",
+      cex.main=2.5)
+legend(x= 777912, y=6390976, 
+       fill = attr(q5Colours, "palette"),
+       cex=1,
+       text.font=2,
+       border="black",
+       legend=c("<2.0", "2.1-2.6", "2.7-3.2", "3.3-3.8", ">3.8"),
+       gsub(",", " - ", names(attr(q5Colours, "table"))), 
+       bg ="white",
+       bty = "n",
+       title="Attitude") 
+
+###Refugees
+plot(gis_muni)
+q5e <- classIntervals(gis_muni$refugee, n=5, style="quantile", dataPrecision =1)
+q5eColours <- findColours(q5e, palette)
+plot(gis_muni, axes=TRUE, col=q5eColours, add=TRUE)
+
+title(main="2015",
+      cex.main=2.5)
+legend(x= 777912, y=6390976, 
+       fill = attr(q5Colours, "palette"),
+       cex=1,
+       text.font=2,
+       border="black",
+       legend=c("0-84", "85-116", "117-153", "154-171", "172-587"),
+       gsub(",", " - ", names(attr(q5Colours, "table"))), 
+       bg ="white",
+       bty = "n",
+       title="Refugees") 
+```
+
+```{r}
+#Removing variables from the GIS so the data from 2011 does not interfere.
+gis_muni$mcode <- NULL
+gis_muni$attitude <-  NULL
+gis_muni$year <- NULL
+gis_muni$refugee <- NULL
+
+dataset19 <- as.matrix(dataset19)
+dataset19<-data.frame(dataset19)
+gis_muni$KOMNAVN<-as.character(gis_muni$KOMNAVN)
+dataset19$municipality<-as.character(dataset19$municipality)
+gis_muni<-merge(gis_muni, dataset19, 
+                by.x=c("KOMNAVN"), 
+                by.y=("municipality"), all=FALSE)
+gis_muni$attitude<-as.numeric(as.character(gis_muni$attitude))
+gis_muni$refugee<-as.numeric(as.character(gis_muni$refugee))
+
+plot(gis_muni)
+q5 <- classIntervals(gis_muni$attitude, n=5, style="quantile", dataPrecision =1)
+q5Colours <- findColours(q5, palette)
+plot(gis_muni, axes=TRUE, col=q5Colours, add=TRUE)
+
+title(main="2019",
+      cex.main=2.5)
+legend(x= 777912, y=6390976, 
+       fill = attr(q5Colours, "palette"),
+       cex=1,
+       text.font=2,
+       border="black",
+       legend=c("<2.0", "2.1-2.6", "2.7-3.2", "3.3-3.8", ">3.8"),
+       gsub(",", " - ", names(attr(q5Colours, "table"))), 
+       bg ="white",
+       bty = "n",
+       title="Attitude") 
+
+###Refugees
+plot(gis_muni)
+q5e <- classIntervals(gis_muni$refugee, n=5, style="quantile", dataPrecision =1)
+q5eColours <- findColours(q5e, palette)
+plot(gis_muni, axes=TRUE, col=q5eColours, add=TRUE)
+
+title(main="2019",
+      cex.main=2.5)
+legend(x= 777912, y=6390976, 
+       fill = attr(q5Colours, "palette"),
+       cex=1,
+       text.font=2,
+       border="black",
+       legend=c("0", "1-3", "4-10", "11-18", "19-127"),
+       gsub(",", " - ", names(attr(q5Colours, "table"))), 
+       bg ="white",
+       bty = "n",
+       title="Refugees") 
+```
